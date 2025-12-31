@@ -44,6 +44,10 @@ def run_ingestion(
     in_memory: bool = False,
     recreate: bool = False,
     batch_size: int = 50,
+    jurisdiction: str = "NYC",
+    doc_type: str = "statute",
+    doc_version: str | None = None,
+    effective_date: str | None = None,
 ) -> dict:
     """
     Run the ingestion pipeline.
@@ -53,6 +57,10 @@ def run_ingestion(
         in_memory: Use in-memory Qdrant (for testing).
         recreate: Delete and recreate collection.
         batch_size: Batch size for embeddings.
+        jurisdiction: Jurisdiction for metadata (default: "NYC").
+        doc_type: Document type (default: "statute").
+        doc_version: Version identifier.
+        effective_date: Effective date (ISO format).
 
     Returns:
         Statistics dictionary.
@@ -70,6 +78,19 @@ def run_ingestion(
     chunks = load_chunks(chunks_path)
     stats["chunks_loaded"] = len(chunks)
     console.print(f"[green]Loaded {len(chunks)} chunks[/green]")
+
+    # Inject metadata into chunks
+    for chunk in chunks:
+        if "metadata" not in chunk:
+            chunk["metadata"] = {}
+        chunk["metadata"]["jurisdiction"] = jurisdiction
+        chunk["metadata"]["doc_type"] = doc_type
+        if doc_version:
+            chunk["metadata"]["doc_version"] = doc_version
+        if effective_date:
+            chunk["metadata"]["effective_date"] = effective_date
+
+    console.print(f"[dim]Metadata: jurisdiction={jurisdiction}, doc_type={doc_type}[/dim]")
 
     if not chunks:
         console.print("[red]No chunks to ingest![/red]")
@@ -213,6 +234,31 @@ def main():
         default=50,
         help="Batch size for embeddings",
     )
+    parser.add_argument(
+        "--jurisdiction",
+        type=str,
+        default="NYC",
+        help="Jurisdiction for metadata (default: NYC)",
+    )
+    parser.add_argument(
+        "--doc-type",
+        type=str,
+        default="statute",
+        choices=["statute", "regulation", "guidance"],
+        help="Document type (default: statute)",
+    )
+    parser.add_argument(
+        "--doc-version",
+        type=str,
+        default=None,
+        help="Version identifier",
+    )
+    parser.add_argument(
+        "--effective-date",
+        type=str,
+        default=None,
+        help="Effective date (ISO format, e.g., 2024-01-01)",
+    )
 
     args = parser.parse_args()
 
@@ -230,6 +276,10 @@ def main():
         in_memory=args.in_memory,
         recreate=args.recreate,
         batch_size=args.batch_size,
+        jurisdiction=args.jurisdiction,
+        doc_type=args.doc_type,
+        doc_version=args.doc_version,
+        effective_date=args.effective_date,
     )
 
     # Summary

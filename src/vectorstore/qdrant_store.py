@@ -271,6 +271,11 @@ class QdrantStore:
                     "token_count": chunk.get("token_count", 0),
                     "source_file": metadata.get("source_file"),
                     "citations": citations,
+                    # New metadata fields for filtering
+                    "jurisdiction": metadata.get("jurisdiction", "NYC"),
+                    "doc_type": metadata.get("doc_type", "statute"),
+                    "doc_version": metadata.get("doc_version"),
+                    "effective_date": metadata.get("effective_date"),
                 }
 
                 point = PointStruct(

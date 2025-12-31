@@ -46,6 +46,8 @@ class CollectionConfig:
         ("section_number", "keyword"),
         ("chapter_number", "integer"),
         ("chunk_type", "keyword"),
+        ("jurisdiction", "keyword"),
+        ("doc_type", "keyword"),
     ])
 
 
@@ -162,5 +164,9 @@ Payload Schema for NYC Tax Law chunks:
     "token_count": int,        # Token count
     "source_file": str,        # Source filename
     "citations": list[str],    # Cross-references found ["11-201", "11-202"]
+    "jurisdiction": str,       # "NYC" (indexed)
+    "doc_type": str,           # "statute" | "regulation" | "guidance" (indexed)
+    "doc_version": str | None, # Version identifier
+    "effective_date": str | None,  # ISO date string
 }
 """
