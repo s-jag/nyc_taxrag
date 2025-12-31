@@ -1,200 +1,113 @@
 # NYC TaxRAG
 
-A terminal-based RAG (Retrieval-Augmented Generation) system for querying NYC Tax Law (Title 11: Taxation and Finance).
+Terminal-based RAG system for NYC Tax Law (Title 11: Taxation and Finance).
 
-## Overview
+## Quick Start
 
-This system enables accurate question-answering over NYC tax law by combining:
-- **RAG Pipeline**: Semantic search over chunked documents with LLM-powered response generation
-- **Fallback System**: Compressed prompt for simple queries or when retrieval fails
-- **Custom Metrics**: Evaluation framework for measuring system quality
+```bash
+# Install dependencies
+pip install -r requirements.txt
 
-## Document Statistics
+# Set API keys
+export OPENAI_API_KEY=your-openai-key
+export ANTHROPIC_API_KEY=your-anthropic-key
 
-| Metric | Value |
-|--------|-------|
-| Source | NYC Administrative Code Title 11 |
-| Chapters | 43 |
-| Sections | 746 (§ 11-XXX format) |
-| Words | ~663,000 |
-| Tokens | ~1,000,000 |
+# Start Qdrant (Docker)
+docker run -p 6333:6333 qdrant/qdrant
+```
+
+## Testing Components
+
+### 1. Chunking
+
+```bash
+# Run chunking on source document
+python scripts/run_chunking.py
+
+# Output: data/processed/chunks/chunks.json (3,498 chunks)
+```
+
+### 2. Ingestion (Embeddings + Vector Store)
+
+```bash
+# Ingest chunks into Qdrant
+python scripts/run_ingestion.py --recreate
+
+# Uses: OpenAI text-embedding-3-small + BM25 sparse vectors
+# Output: Qdrant collection "nyc_tax_law"
+```
+
+### 3. Search
+
+```bash
+# Test search functionality
+python scripts/test_search.py --query "property tax assessment"
+
+# Filter by chapter
+python scripts/test_search.py --query "exemptions" --chapter 2
+
+# Filter by section
+python scripts/test_search.py --section "11-201"
+```
 
 ## Architecture
 
 ```
-User Query (Terminal)
-       │
-       ▼
-   Query Router ─────────────────┐
-       │                         │
-       ▼                         ▼
-   RAG Pipeline            Fallback System
-       │                         │
-       ▼                         ▼
-   Retriever              Compressed Prompt
-   (Vector Search)        (~50K token summary)
-       │                         │
-       ▼                         │
-   Context Builder               │
-       │                         │
-       └─────────┬───────────────┘
-                 ▼
-            LLM (Claude)
-                 │
-                 ▼
-         Response + Citations
+Source HTML → Chunking → Embeddings → Qdrant → Hybrid Search → LLM → Response
+                ↓
+         3,498 chunks
+         746 sections
+         ~1M tokens
 ```
 
-### RAG Pipeline
+### Search Pipeline
 
-1. **Query Processing**: Normalize query, detect section references (11-XXX)
-2. **Retrieval**: Semantic search via embeddings → retrieve top-K chunks
-3. **Context Building**: Aggregate chunks with metadata
-4. **Generation**: Claude API call with retrieved context
-5. **Citation**: Include source sections in response
-
-### Fallback System
-
-- Pre-generated compressed prompt (~30-50K tokens)
-- Contains chapter summaries, key definitions, common procedures
-- Triggered when retrieval confidence is low or for general queries
-- Direct LLM call with full compressed context
+| Stage | Description |
+|-------|-------------|
+| Dense | OpenAI text-embedding-3-small (1536 dims) |
+| Sparse | BM25 via fastembed |
+| Fusion | Reciprocal Rank Fusion (RRF) |
+| Expansion | Cross-reference citation expansion |
 
 ## Project Structure
 
 ```
 nyc_taxrag/
 ├── data/
-│   ├── raw/                     # Source documents (HTML, TXT)
-│   ├── processed/               # Chunks, embeddings, index
-│   └── analysis/                # Statistics and reports
+│   ├── raw/                    # Source HTML/TXT
+│   └── processed/chunks/       # Chunked JSON
 ├── src/
-│   ├── analysis/                # Document analysis
-│   ├── chunking/                # Document chunking [Black Box]
-│   ├── embedding/               # Embedding generation
-│   ├── vectorstore/             # Vector storage
-│   ├── retrieval/               # Search and retrieval
-│   ├── rag/                     # RAG pipeline
-│   ├── fallback/                # Fallback system
-│   ├── metrics/                 # Evaluation [Black Box]
-│   ├── llm/                     # LLM client
-│   └── config/                  # Configuration
-├── cli/                         # Terminal interface
-├── scripts/                     # Utility scripts
-├── deploy/                      # Cloud deployment
-└── tests/                       # Test suite
+│   ├── chunking/               # zChunk algorithm
+│   ├── embedding/              # OpenAI embeddings
+│   └── vectorstore/            # Qdrant + hybrid search
+├── scripts/
+│   ├── run_chunking.py         # Chunk documents
+│   ├── run_ingestion.py        # Embed + upsert
+│   └── test_search.py          # Test queries
+└── docs/
+    ├── chunking.md             # Chunking details
+    └── vectorstore.md          # Vector store details
 ```
 
-## Quick Start
+## Configuration
 
-### Installation
+| Variable | Description |
+|----------|-------------|
+| `OPENAI_API_KEY` | For embeddings |
+| `ANTHROPIC_API_KEY` | For LLM generation |
 
-```bash
-# Clone repository
-git clone https://github.com/your-org/nyc_taxrag.git
-cd nyc_taxrag
+Qdrant runs locally on `localhost:6333` by default.
 
-# Install dependencies (using pip)
-pip install -r requirements.txt
+## Stats
 
-# Or using Poetry
-poetry install
+| Metric | Value |
+|--------|-------|
+| Chunks | 3,498 |
+| Sections | 746 |
+| Tokens | ~1.1M |
+| Avg chunk | 328 tokens |
 
-# Copy environment template
-cp .env.example .env
-# Edit .env with your API keys
-```
+## Docs
 
-### Configuration
-
-Set the following environment variables in `.env`:
-
-```bash
-NYCTAX_ANTHROPIC_API_KEY=your-anthropic-api-key
-NYCTAX_OPENAI_API_KEY=your-openai-api-key  # For embeddings
-```
-
-### Usage
-
-```bash
-# Generate document statistics
-python scripts/generate_basic_stats.py
-
-# Ingest documents (chunk and index)
-nyctax ingest --source data/raw/
-
-# Query the system
-nyctax query "What are the requirements for real property assessment?"
-
-# Query with specific mode
-nyctax query "What is section 11-201?" --mode rag
-nyctax query "What is the structure of NYC tax law?" --mode fallback
-
-# Run evaluation
-nyctax evaluate --test-set tests/fixtures/test_queries.json
-```
-
-## CLI Commands
-
-| Command | Description |
-|---------|-------------|
-| `nyctax analyze --stats` | Generate document statistics |
-| `nyctax ingest --source <path>` | Chunk and index documents |
-| `nyctax query "<question>"` | Query the system (auto mode) |
-| `nyctax query "<question>" --mode [rag\|fallback]` | Query with specific mode |
-| `nyctax evaluate --test-set <path>` | Run evaluation metrics |
-
-## Technology Stack
-
-| Component | Technology |
-|-----------|------------|
-| Language | Python 3.11+ |
-| CLI | Typer |
-| Configuration | pydantic-settings |
-| LLM | Anthropic Claude |
-| Embeddings | OpenAI text-embedding-3-small |
-| Vector Store | ChromaDB (local) / Pinecone (cloud) |
-| Cloud Deploy | AWS Lambda + API Gateway |
-
-## Development
-
-### Running Tests
-
-```bash
-pytest tests/
-```
-
-### Code Quality
-
-```bash
-# Linting
-ruff check .
-
-# Type checking
-mypy src/
-```
-
-## Black Box Components
-
-The following components have interfaces defined but implementation is TBD:
-
-### Chunking Algorithm (`src/chunking/`)
-
-- Placeholder: Simple character-based chunking
-- Planned: Section-aware chunking that respects § 11-XXX boundaries
-- Requirements:
-  - Preserve hierarchy metadata (Chapter → Subchapter → Section)
-  - Target 500-1000 tokens per chunk
-  - Handle cross-references
-
-### Metrics Evaluator (`src/metrics/`)
-
-- Placeholder: Basic retrieval and response metrics
-- Planned metrics:
-  - Retrieval: Precision@K, Recall@K, MRR, NDCG
-  - Response: Relevance, citation accuracy, factual correctness
-  - Latency: E2E time, retrieval time, generation time
-
-## License
-
-MIT
+- [Chunking](docs/chunking.md) - zChunk algorithm details
+- [Vector Store](docs/vectorstore.md) - Qdrant hybrid search
