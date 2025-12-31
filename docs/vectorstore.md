@@ -5,14 +5,23 @@ Qdrant-based hybrid search for NYC Tax Law RAG.
 ## Quick Test
 
 ```bash
-# 1. Start Qdrant
-docker run -p 6333:6333 qdrant/qdrant
+# Set environment variables
+export OPENAI_API_KEY=your-key
+export QDRANT_URL=https://your-cluster.cloud.qdrant.io:6333
+export QDRANT_API_KEY=your-qdrant-key
 
-# 2. Ingest chunks (requires OPENAI_API_KEY)
+# Ingest chunks
 python scripts/run_ingestion.py --recreate
 
-# 3. Test search
+# Test search
 python scripts/test_search.py --query "property tax assessment"
+```
+
+### Local Qdrant (alternative)
+
+```bash
+docker run -p 6333:6333 qdrant/qdrant
+# Leave QDRANT_URL and QDRANT_API_KEY unset
 ```
 
 ## Search Types

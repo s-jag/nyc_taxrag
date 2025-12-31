@@ -8,11 +8,22 @@ Terminal-based RAG system for NYC Tax Law (Title 11: Taxation and Finance).
 # Install dependencies
 pip install -r requirements.txt
 
-# Set API keys
-export OPENAI_API_KEY=your-openai-key
-export ANTHROPIC_API_KEY=your-anthropic-key
+# Copy and configure environment
+cp .env.example .env
+# Edit .env with your API keys
+```
 
-# Start Qdrant (Docker)
+## Configuration
+
+```bash
+# Required
+export OPENAI_API_KEY=your-openai-key
+
+# Qdrant Cloud (recommended)
+export QDRANT_URL=https://your-cluster.cloud.qdrant.io:6333
+export QDRANT_API_KEY=your-qdrant-api-key
+
+# Or local Qdrant
 docker run -p 6333:6333 qdrant/qdrant
 ```
 
@@ -21,53 +32,40 @@ docker run -p 6333:6333 qdrant/qdrant
 ### 1. Chunking
 
 ```bash
-# Run chunking on source document
 python scripts/run_chunking.py
-
 # Output: data/processed/chunks/chunks.json (3,498 chunks)
 ```
 
-### 2. Ingestion (Embeddings + Vector Store)
+### 2. Ingestion
 
 ```bash
-# Ingest chunks into Qdrant
 python scripts/run_ingestion.py --recreate
-
-# Uses: OpenAI text-embedding-3-small + BM25 sparse vectors
-# Output: Qdrant collection "nyc_tax_law"
+# Embeds chunks and uploads to Qdrant
 ```
 
 ### 3. Search
 
 ```bash
-# Test search functionality
 python scripts/test_search.py --query "property tax assessment"
-
-# Filter by chapter
 python scripts/test_search.py --query "exemptions" --chapter 2
-
-# Filter by section
 python scripts/test_search.py --section "11-201"
 ```
 
 ## Architecture
 
 ```
-Source HTML → Chunking → Embeddings → Qdrant → Hybrid Search → LLM → Response
+Source HTML → Chunking → Embeddings → Qdrant Cloud → Hybrid Search → LLM
                 ↓
          3,498 chunks
          746 sections
-         ~1M tokens
 ```
 
-### Search Pipeline
-
-| Stage | Description |
-|-------|-------------|
-| Dense | OpenAI text-embedding-3-small (1536 dims) |
+| Stage | Technology |
+|-------|------------|
+| Embeddings | OpenAI text-embedding-3-small (1536 dims) |
 | Sparse | BM25 via fastembed |
+| Vector Store | Qdrant Cloud |
 | Fusion | Reciprocal Rank Fusion (RRF) |
-| Expansion | Cross-reference citation expansion |
 
 ## Project Structure
 
@@ -81,22 +79,13 @@ nyc_taxrag/
 │   ├── embedding/              # OpenAI embeddings
 │   └── vectorstore/            # Qdrant + hybrid search
 ├── scripts/
-│   ├── run_chunking.py         # Chunk documents
-│   ├── run_ingestion.py        # Embed + upsert
-│   └── test_search.py          # Test queries
+│   ├── run_chunking.py
+│   ├── run_ingestion.py
+│   └── test_search.py
 └── docs/
-    ├── chunking.md             # Chunking details
-    └── vectorstore.md          # Vector store details
+    ├── chunking.md
+    └── vectorstore.md
 ```
-
-## Configuration
-
-| Variable | Description |
-|----------|-------------|
-| `OPENAI_API_KEY` | For embeddings |
-| `ANTHROPIC_API_KEY` | For LLM generation |
-
-Qdrant runs locally on `localhost:6333` by default.
 
 ## Stats
 
@@ -109,5 +98,5 @@ Qdrant runs locally on `localhost:6333` by default.
 
 ## Docs
 
-- [Chunking](docs/chunking.md) - zChunk algorithm details
-- [Vector Store](docs/vectorstore.md) - Qdrant hybrid search
+- [Chunking](docs/chunking.md)
+- [Vector Store](docs/vectorstore.md)

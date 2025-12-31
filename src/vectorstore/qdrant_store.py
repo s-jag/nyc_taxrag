@@ -114,12 +114,14 @@ class QdrantStore:
         Initialize the Qdrant store.
 
         Args:
-            url: Qdrant server URL. If None, uses localhost.
-            port: Qdrant server port.
-            api_key: API key for Qdrant Cloud.
+            url: Qdrant server URL. If None, checks QDRANT_URL env var, then localhost.
+            port: Qdrant server port (ignored for cloud URLs).
+            api_key: API key for Qdrant Cloud. If None, checks QDRANT_API_KEY env var.
             collection_name: Name of the collection.
             in_memory: If True, use in-memory storage (for testing).
         """
+        import os
+
         if not QDRANT_AVAILABLE:
             raise ImportError(
                 "qdrant-client is required. Install with: pip install qdrant-client"
@@ -127,12 +129,21 @@ class QdrantStore:
 
         self.collection_name = collection_name
 
+        # Check environment variables
+        url = url or os.getenv("QDRANT_URL")
+        api_key = api_key or os.getenv("QDRANT_API_KEY")
+
         if in_memory:
             self.client = QdrantClient(":memory:")
-        elif api_key:
+        elif url and api_key:
+            # Cloud connection
             self.client = QdrantClient(url=url, api_key=api_key)
+        elif url:
+            # URL without API key (local with custom URL)
+            self.client = QdrantClient(url=url)
         else:
-            self.client = QdrantClient(host=url or "localhost", port=port)
+            # Default: localhost
+            self.client = QdrantClient(host="localhost", port=port)
 
         # Initialize sparse embedding model
         self._sparse_model = None

@@ -87,7 +87,17 @@ def run_ingestion(
 
     # Initialize Qdrant store
     console.print("\n[bold blue]Initializing Qdrant store...[/]")
-    mode = "in-memory" if in_memory else "localhost:6333"
+
+    import os
+    qdrant_url = os.getenv("QDRANT_URL")
+    qdrant_api_key = os.getenv("QDRANT_API_KEY")
+
+    if in_memory:
+        mode = "in-memory"
+    elif qdrant_url and qdrant_api_key:
+        mode = f"cloud ({qdrant_url[:50]}...)"
+    else:
+        mode = "localhost:6333"
     console.print(f"[dim]Mode: {mode}[/dim]")
 
     try:
@@ -96,8 +106,10 @@ def run_ingestion(
         console.print("[green]Collection ready[/green]")
     except Exception as e:
         console.print(f"[red]Failed to initialize Qdrant: {e}[/red]")
-        if not in_memory:
+        if not in_memory and not qdrant_url:
             console.print("[yellow]Make sure Qdrant is running: docker run -p 6333:6333 qdrant/qdrant[/yellow]")
+        elif qdrant_url:
+            console.print("[yellow]Check your QDRANT_URL and QDRANT_API_KEY[/yellow]")
         return stats
 
     # Generate embeddings
