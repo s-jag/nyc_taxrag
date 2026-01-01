@@ -30,17 +30,36 @@ from src.llm.providers import OpenAIClient
 from src.fallback import FallbackResponse
 
 
+# Available models for response generation
+AVAILABLE_MODELS = {
+    "gpt-4o": "GPT-4o (Default)",
+    "gpt-4o-mini": "GPT-4o Mini (Faster)",
+    "gpt-4-turbo": "GPT-4 Turbo",
+    "o3-mini": "O3 Mini (Reasoning)",
+    "o1-mini": "O1 Mini (Reasoning)",
+    "o1": "O1 (Reasoning - Advanced)",
+}
+
+
 @st.cache_resource
+def get_embedder_and_store():
+    """Cache embedder and store separately (don't change with model)."""
+    embedder = OpenAIEmbedder()
+    store = QdrantStore()
+    return embedder, store
+
+
 def get_pipeline(
     retrieval_mode: str,
     top_k: int,
     enable_fallback: bool,
     fallback_threshold: float,
+    model: str,
+    fallback_model: str,
 ) -> RAGPipeline:
-    """Initialize and cache the RAG pipeline."""
-    embedder = OpenAIEmbedder()
-    store = QdrantStore()
-    llm = OpenAIClient()
+    """Initialize the RAG pipeline with specified model."""
+    embedder, store = get_embedder_and_store()
+    llm = OpenAIClient(model=model)
 
     config = RAGConfig(
         retrieval_mode=retrieval_mode,
@@ -49,6 +68,8 @@ def get_pipeline(
         max_context_tokens=6000,
         enable_fallback=enable_fallback,
         fallback_threshold=fallback_threshold,
+        model=model,
+        fallback_model=fallback_model,
     )
 
     return RAGPipeline(
@@ -59,6 +80,60 @@ def get_pipeline(
     )
 
 
+def display_chunk_viewer(chunks, title="Retrieved Chunks"):
+    """Display expandable chunk viewer."""
+    st.subheader(title)
+
+    if not chunks:
+        st.info("No chunks to display.")
+        return
+
+    # Create a selectbox to choose which chunk to view
+    chunk_options = []
+    for i, chunk in enumerate(chunks, 1):
+        section = chunk.section_number or "N/A"
+        score = f"{chunk.score:.3f}" if chunk.score > 0 else "ref"
+        preview = chunk.text[:50].replace("\n", " ") + "..."
+        chunk_options.append(f"[{i}] Section {section} (Score: {score}) - {preview}")
+
+    selected_idx = st.selectbox(
+        "Select a chunk to view full text:",
+        range(len(chunk_options)),
+        format_func=lambda x: chunk_options[x],
+        key=f"chunk_select_{title}",
+    )
+
+    # Display the selected chunk
+    if selected_idx is not None and chunks:
+        selected_chunk = chunks[selected_idx]
+
+        with st.container():
+            # Chunk metadata
+            col1, col2, col3, col4 = st.columns(4)
+            col1.markdown(f"**Section:** {selected_chunk.section_number or 'N/A'}")
+            col2.markdown(f"**Score:** {selected_chunk.score:.3f}" if selected_chunk.score > 0 else "**Score:** ref")
+            col3.markdown(f"**Type:** {selected_chunk.chunk_type or 'N/A'}")
+            col4.markdown(f"**Tokens:** {selected_chunk.token_count}")
+
+            # Chapter info
+            if selected_chunk.chapter:
+                st.markdown(f"**Chapter:** {selected_chunk.chapter}")
+
+            # Full text in a code block for readability
+            st.markdown("**Full Text:**")
+            st.text_area(
+                label="Chunk text",
+                value=selected_chunk.text,
+                height=200,
+                disabled=True,
+                label_visibility="collapsed",
+            )
+
+            # Citations if any
+            if selected_chunk.citations:
+                st.markdown(f"**Citations:** {', '.join(selected_chunk.citations)}")
+
+
 def main():
     """Main Streamlit application."""
     st.title("NYC Tax Law RAG - QA Testing")
@@ -67,6 +142,28 @@ def main():
     # Sidebar configuration
     with st.sidebar:
         st.header("Configuration")
+
+        # Model selection
+        st.subheader("Model Settings")
+
+        model = st.selectbox(
+            "Response Model",
+            options=list(AVAILABLE_MODELS.keys()),
+            index=0,
+            format_func=lambda x: AVAILABLE_MODELS[x],
+            help="Model used for generating the response",
+        )
+
+        fallback_model = st.selectbox(
+            "Fallback Model",
+            options=["o3-mini", "o1-mini", "o1"],
+            index=0,
+            format_func=lambda x: AVAILABLE_MODELS.get(x, x),
+            help="Reasoning model used when fallback is triggered",
+        )
+
+        st.divider()
+        st.subheader("Retrieval Settings")
 
         retrieval_mode = st.selectbox(
             "Retrieval Mode",
@@ -114,12 +211,14 @@ def main():
     # Process query
     if query:
         try:
-            with st.spinner("Processing query..."):
+            with st.spinner(f"Processing query with {AVAILABLE_MODELS[model]}..."):
                 pipeline = get_pipeline(
                     retrieval_mode=retrieval_mode,
                     top_k=top_k,
                     enable_fallback=enable_fallback,
                     fallback_threshold=fallback_threshold,
+                    model=model,
+                    fallback_model=fallback_model,
                 )
                 response = pipeline.query(query)
 
@@ -134,44 +233,24 @@ def main():
                 st.subheader("Answer")
                 st.markdown(response.answer)
 
-                # Display low-confidence chunks
-                if response.original_chunks:
-                    st.subheader("Low-Confidence Chunks (used as context)")
-                    chunks_data = []
-                    for i, chunk in enumerate(response.original_chunks[:5], 1):
-                        chunks_data.append({
-                            "#": i,
-                            "Section": chunk.section_number or "N/A",
-                            "Score": f"{chunk.score:.3f}",
-                            "Preview": chunk.text[:100] + "...",
-                        })
-                    st.dataframe(chunks_data, use_container_width=True)
-
                 # Metrics
                 col1, col2, col3 = st.columns(3)
                 col1.metric("Model", response.model)
                 col2.metric("Generation", f"{response.generation_time_ms:.0f}ms")
                 col3.metric("Tokens", response.total_tokens)
 
+                # Display low-confidence chunks with viewer
+                if response.original_chunks:
+                    st.divider()
+                    display_chunk_viewer(
+                        response.original_chunks,
+                        title="Low-Confidence Chunks (used as context)"
+                    )
+
             else:
                 # Normal RAG response
                 st.subheader("Answer")
                 st.markdown(response.answer)
-
-                # Display sources
-                if response.sources:
-                    st.subheader("Sources")
-                    sources_data = []
-                    for i, source in enumerate(response.sources[:8], 1):
-                        score = f"{source.score:.3f}" if source.score > 0 else "ref"
-                        sources_data.append({
-                            "#": i,
-                            "Section": source.section_number or "N/A",
-                            "Chapter": (source.chapter[:25] + "...") if source.chapter and len(source.chapter) > 25 else (source.chapter or "N/A"),
-                            "Score": score,
-                            "Type": source.chunk_type or "N/A",
-                        })
-                    st.dataframe(sources_data, use_container_width=True)
 
                 # Metrics
                 col1, col2, col3, col4 = st.columns(4)
@@ -179,6 +258,27 @@ def main():
                 col2.metric("Retrieval", f"{response.retrieval_time_ms:.0f}ms")
                 col3.metric("Generation", f"{response.generation_time_ms:.0f}ms")
                 col4.metric("Model", response.model)
+
+                # Display sources summary table
+                if response.sources:
+                    st.divider()
+                    st.subheader("Sources Summary")
+                    sources_data = []
+                    for i, source in enumerate(response.sources[:10], 1):
+                        score = f"{source.score:.3f}" if source.score > 0 else "ref"
+                        sources_data.append({
+                            "#": i,
+                            "Section": source.section_number or "N/A",
+                            "Chapter": (source.chapter[:30] + "...") if source.chapter and len(source.chapter) > 30 else (source.chapter or "N/A"),
+                            "Score": score,
+                            "Type": source.chunk_type or "N/A",
+                            "Tokens": source.token_count,
+                        })
+                    st.dataframe(sources_data, use_container_width=True)
+
+                    # Expandable chunk viewer
+                    st.divider()
+                    display_chunk_viewer(response.sources, title="View Full Chunk Text")
 
         except Exception as e:
             st.error(f"Error processing query: {str(e)}")
