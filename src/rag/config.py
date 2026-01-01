@@ -53,6 +53,12 @@ class RAGConfig:
     temperature: float = 0.1
     max_tokens: int = 2048
 
+    # Fallback settings
+    enable_fallback: bool = True
+    fallback_threshold: float = 0.6  # Trigger fallback below this score
+    fallback_model: str = "o3-mini"  # OpenAI reasoning model
+    fallback_prompt_path: str = "fallback_prompt.txt"
+
     def __post_init__(self) -> None:
         """Validate configuration."""
         if self.retrieval_mode not in ("dense", "hybrid"):
@@ -63,3 +69,7 @@ class RAGConfig:
             raise ValueError(f"max_context_tokens too small: {self.max_context_tokens}")
         if not 0 <= self.temperature <= 2:
             raise ValueError(f"temperature must be 0-2, got {self.temperature}")
+        if not 0 <= self.fallback_threshold <= 1:
+            raise ValueError(
+                f"fallback_threshold must be 0-1, got {self.fallback_threshold}"
+            )

@@ -15,9 +15,11 @@ from .context import ContextAssembler
 from .types import RAGResponse, RetrievalResult
 
 if TYPE_CHECKING:
+    from rich.console import Console
     from src.embedding import OpenAIEmbedder
     from src.llm.client import LLMClient
     from src.vectorstore import QdrantStore, SearchResult
+    from src.fallback import FallbackHandler, FallbackResponse
 
 
 logger = logging.getLogger(__name__)
@@ -91,9 +93,24 @@ class RAGPipeline:
         # Initialize components
         self.assembler = ContextAssembler(max_tokens=self.config.max_context_tokens)
 
-        # Lazy-load hybrid searcher and expander
+        # Lazy-load hybrid searcher, expander, and fallback handler
         self._hybrid_searcher = None
         self._expander = None
+        self._fallback_handler = None
+
+    @property
+    def fallback_handler(self) -> "FallbackHandler":
+        """Lazy-load fallback handler."""
+        if self._fallback_handler is None:
+            from src.fallback import FallbackHandler, FallbackConfig
+
+            fallback_config = FallbackConfig(
+                confidence_threshold=self.config.fallback_threshold,
+                fallback_model=self.config.fallback_model,
+                prompt_path=self.config.fallback_prompt_path,
+            )
+            self._fallback_handler = FallbackHandler(config=fallback_config)
+        return self._fallback_handler
 
     @property
     def hybrid_searcher(self):
@@ -111,22 +128,41 @@ class RAGPipeline:
             self._expander = CrossReferenceExpander(self.store)
         return self._expander
 
-    def query(self, question: str) -> RAGResponse:
+    def query(
+        self,
+        question: str,
+        console: "Console | None" = None,
+    ) -> "RAGResponse | FallbackResponse":
         """
         Execute the full RAG pipeline.
 
         Args:
             question: User's question.
+            console: Optional Rich console for verbose fallback output.
 
         Returns:
-            RAGResponse with answer and sources.
+            RAGResponse with answer and sources, or FallbackResponse if fallback triggered.
         """
         logger.info(f"RAG query: {question[:100]}...")
 
         # 1. Retrieve relevant chunks
         retrieval_result = self.retrieve(question)
 
-        # 2. Assemble context
+        # 2. Check if fallback should be triggered
+        if self.config.enable_fallback:
+            if self.fallback_handler.should_fallback(retrieval_result):
+                logger.info(
+                    f"Triggering fallback: top score below threshold "
+                    f"({self.config.fallback_threshold})"
+                )
+                return self.fallback_handler.execute_fallback(
+                    question=question,
+                    retrieval_result=retrieval_result,
+                    console=console,
+                )
+
+        # Normal RAG flow continues
+        # 3. Assemble context
         context = self.assembler.assemble(
             primary_results=retrieval_result.primary_chunks,
             expanded_results=retrieval_result.expanded_chunks,
@@ -139,7 +175,7 @@ class RAGPipeline:
             f"{context.chunks_truncated} truncated"
         )
 
-        # 3. Generate response
+        # 4. Generate response
         gen_start = time.perf_counter()
 
         prompt = self._build_prompt(question, context.context_text)

@@ -249,7 +249,7 @@ class TestRAGPipeline:
 
     def test_full_query(self, mock_embedder, mock_store, mock_llm):
         """Test full RAG query."""
-        config = RAGConfig(expand_cross_refs=False)
+        config = RAGConfig(expand_cross_refs=False, enable_fallback=False)
         pipeline = RAGPipeline(
             embedder=mock_embedder,
             store=mock_store,

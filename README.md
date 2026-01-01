@@ -68,6 +68,11 @@ python scripts/test_rag.py --query "commissioner powers" --retrieve-only
 
 # Custom settings
 python scripts/test_rag.py --query "tax rates" --top-k 10 --no-expand
+
+# Fallback options (for low-confidence queries)
+python scripts/test_rag.py --query "obscure topic" --fallback-threshold 0.5
+python scripts/test_rag.py --query "query" --no-fallback
+python scripts/test_rag.py --query "query" --fallback-model o3
 ```
 
 ### 5. Unit Tests
@@ -83,6 +88,11 @@ Source HTML → Chunking → Embeddings → Qdrant Cloud → Hybrid Search → L
                 ↓                           ↓               ↓
          3,498 chunks              Cross-Ref Expansion   GPT-4o
          746 sections              Context Assembly      Answer
+                                          ↓
+                                   Low Confidence?
+                                          ↓
+                                   Fallback → O3-mini
+                                   (LAW PACK prompt)
 ```
 
 | Stage | Technology |
@@ -92,6 +102,7 @@ Source HTML → Chunking → Embeddings → Qdrant Cloud → Hybrid Search → L
 | Vector Store | Qdrant Cloud |
 | Fusion | Reciprocal Rank Fusion (RRF) |
 | LLM | OpenAI GPT-4o |
+| Fallback | OpenAI O3-mini (reasoning model) |
 
 ## RAG Pipeline
 
@@ -99,9 +110,10 @@ The RAG pipeline (`src/rag/pipeline.py`) orchestrates:
 
 1. **Query Embedding** - Converts question to dense vector
 2. **Retrieval** - Dense or hybrid search with filtering
-3. **Cross-Reference Expansion** - Fetches cited sections
-4. **Context Assembly** - Deduplication and token budgeting
-5. **Generation** - GPT-4o generates answer with citations
+3. **Fallback Check** - If top chunk score < 60%, triggers fallback to O3-mini
+4. **Cross-Reference Expansion** - Fetches cited sections
+5. **Context Assembly** - Deduplication and token budgeting
+6. **Generation** - GPT-4o generates answer with citations
 
 ### Python API
 
@@ -141,6 +153,9 @@ print(response.format_sources())
 | `deduplicate` | `True` | Remove duplicate chunks |
 | `temperature` | `0.1` | LLM temperature |
 | `model` | `"gpt-4o"` | OpenAI model |
+| `enable_fallback` | `True` | Enable fallback for low-confidence results |
+| `fallback_threshold` | `0.6` | Score threshold to trigger fallback |
+| `fallback_model` | `"o3-mini"` | OpenAI reasoning model for fallback |
 
 ## Project Structure
 
@@ -158,6 +173,11 @@ nyc_taxrag/
 │   │   ├── context.py          # Context assembly
 │   │   ├── config.py           # Configuration
 │   │   └── types.py            # Type definitions
+│   ├── fallback/               # Fallback system
+│   │   ├── config.py           # FallbackConfig
+│   │   ├── handler.py          # FallbackHandler
+│   │   ├── prompt.py           # FallbackPromptBuilder
+│   │   └── types.py            # FallbackResponse
 │   └── llm/                    # LLM clients
 │       ├── client.py           # Abstract interface
 │       └── providers/          # Implementations
@@ -170,10 +190,57 @@ nyc_taxrag/
 ├── tests/
 │   └── unit/
 │       └── test_rag_pipeline.py
+├── fallback_prompt.txt         # LAW PACK for fallback
 └── docs/
     ├── chunking.md
     ├── vectorstore.md
     └── rag.md
+```
+
+## Fallback System
+
+When RAG retrieval returns low-confidence results (top chunk score < 60%), the system automatically falls back to a reasoning model with a comprehensive legal prompt.
+
+### How It Works
+
+1. **Trigger**: Top chunk score below threshold (default: 0.6)
+2. **Verbose Output**: Shows retrieved chunks, scores, and explains why fallback triggered
+3. **Fallback Prompt**: Loads `fallback_prompt.txt` containing the full NYC Tax Law reference (LAW PACK)
+4. **Context Injection**: Low-confidence chunks are prepended as additional context
+5. **Reasoning Model**: Sends to OpenAI O3-mini for complex legal reasoning
+6. **Response**: Returns structured legal answer with citations
+
+### CLI Output Example
+
+```
+LOW CONFIDENCE RETRIEVAL - ACTIVATING FALLBACK
+
+Retrieved Chunks (below 60% threshold):
+┌───┬──────────────┬─────────┬──────────────────────────────┐
+│ # │ Section      │ Score   │ Preview                      │
+├───┼──────────────┼─────────┼──────────────────────────────┤
+│ 1 │ § 11-201     │ 0.423   │ Property assessment...       │
+│ 2 │ § 11-202     │ 0.387   │ Tax exemptions...            │
+└───┴──────────────┴─────────┴──────────────────────────────┘
+
+Fallback Strategy:
+  -> Top chunk score: 0.423 (threshold: 60%)
+  -> Including 2 low-confidence chunks as context
+  -> Using comprehensive NYC Tax Law reference (LAW PACK)
+  -> Sending to reasoning model: o3-mini
+
+FALLBACK RESPONSE (o3-mini)
+[Generated legal answer with citations]
+```
+
+### Disabling Fallback
+
+```bash
+# Disable fallback entirely
+python scripts/test_rag.py --query "topic" --no-fallback
+
+# Adjust threshold
+python scripts/test_rag.py --query "topic" --fallback-threshold 0.4
 ```
 
 ## Stats
