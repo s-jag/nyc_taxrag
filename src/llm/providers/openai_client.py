@@ -54,6 +54,11 @@ class OpenAIClient(LLMClient):
         """Return the model name."""
         return self._model
 
+    def _is_reasoning_model(self) -> bool:
+        """Check if the current model is a reasoning model (o1, o3, etc.)."""
+        reasoning_prefixes = ("o1", "o3")
+        return self._model.startswith(reasoning_prefixes)
+
     def generate(
         self,
         prompt: str,
@@ -75,17 +80,32 @@ class OpenAIClient(LLMClient):
         """
         messages = []
 
-        if system:
-            messages.append({"role": "system", "content": system})
+        # Reasoning models (o1, o3) don't support system prompts
+        # Prepend system content to user prompt instead
+        if self._is_reasoning_model():
+            if system:
+                prompt = f"{system}\n\n{prompt}"
+            messages.append({"role": "user", "content": prompt})
 
-        messages.append({"role": "user", "content": prompt})
+            # Reasoning models use max_completion_tokens, not max_tokens
+            # They also don't support temperature parameter
+            response = self.client.chat.completions.create(
+                model=self._model,
+                messages=messages,
+                max_completion_tokens=max_tokens,
+            )
+        else:
+            # Standard models (gpt-4o, etc.)
+            if system:
+                messages.append({"role": "system", "content": system})
+            messages.append({"role": "user", "content": prompt})
 
-        response = self.client.chat.completions.create(
-            model=self._model,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
+            response = self.client.chat.completions.create(
+                model=self._model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
 
         # Extract content from response
         content = ""
